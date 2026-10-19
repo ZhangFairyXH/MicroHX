@@ -5,6 +5,7 @@ Without arguments, all three values are prompted interactively.
 """
 
 import argparse
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from getpass import getpass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -25,6 +26,7 @@ USER_AGENT = (
     "ColorScheme/Light wwmver/3.26.509.642"
 )
 TIMEOUT_SECONDS = 15
+MAX_WORKERS = 5
 
 
 class BodyHeadingParser(HTMLParser):
@@ -89,6 +91,17 @@ def fetch_heading(url, cookies):
     return parser.heading
 
 
+def scan_activity(aid, cookies):
+    url = generate_url(2, aid)
+    try:
+        heading = fetch_heading(url, cookies)
+        if heading is None:
+            return url, "未找到 /html/body/h1", False
+        return url, " ".join(heading.split()), True
+    except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
+        return url, f"请求失败: {error}", False
+
+
 def parse_inputs():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("cookies", nargs="?", help="Raw Cookie header value")
@@ -123,26 +136,42 @@ def main():
     destination = Path(__file__).resolve().parent / "result" / f"Scan_Activit_{start}_{end}.txt"
     destination.parent.mkdir(parents=True, exist_ok=True)
     total = end - start + 1
-    print(f"开始扫描: {start} 至 {end}，共 {total} 个编号", flush=True)
+    workers = min(MAX_WORKERS, total)
+    print(f"开始扫描: {start} 至 {end}，共 {total} 个编号，并发 {workers}", flush=True)
     print(f"结果文件: {destination}", flush=True)
     success = 0
     with destination.open("w", encoding="utf-8") as output:
-        for index, aid in enumerate(range(start, end + 1), 1):
-            url = generate_url(2, aid)
-            print(f"[{index}/{total}] [{aid}] 请求: {url}", flush=True)
-            try:
-                heading = fetch_heading(url, cookies)
-                if heading is None:
-                    result = "未找到 /html/body/h1"
-                else:
-                    result = heading
-                    success += 1
-            except (HTTPError, URLError, TimeoutError, OSError, ValueError) as error:
-                result = f"请求失败: {error}"
-            result = " ".join(result.split())
-            output.write(f"[{aid}] --> {result}\n")
-            output.flush()
-            print(f"[{index}/{total}] [{aid}] 结果: {result}", flush=True)
+        next_aid = start
+        next_write = start
+        completed = 0
+        buffered = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending = {}
+
+            def submit_next():
+                nonlocal next_aid
+                aid = next_aid
+                next_aid += 1
+                pending[executor.submit(scan_activity, aid, cookies)] = aid
+                print(f"[{aid - start + 1}/{total}] [{aid}] 已提交请求", flush=True)
+
+            for _ in range(workers):
+                submit_next()
+            while pending:
+                done, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    aid = pending.pop(future)
+                    url, result, found = future.result()
+                    completed += 1
+                    success += found
+                    buffered[aid] = result
+                    print(f"[{completed}/{total}] [{aid}] {url} --> {result}", flush=True)
+                    while next_write in buffered:
+                        output.write(f"[{next_write}] --> {buffered.pop(next_write)}\n")
+                        output.flush()
+                        next_write += 1
+                    if next_aid <= end:
+                        submit_next()
     print(f"扫描完成: 成功提取 {success}/{total}，结果已保存至 {destination}", flush=True)
 
 
