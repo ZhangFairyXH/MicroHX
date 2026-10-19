@@ -14,10 +14,7 @@ from pathlib import Path
 import re
 import secrets
 
-import qrcode
-
-
-__all__ = ["generate_qrcode"]
+__all__ = ["generate_qrcode", "generate_url"]
 
 _KEYSTREAM = b"b7c0f55bb2a42a7845eedebc78d38c43"
 _PREFIXES = {
@@ -62,6 +59,8 @@ def _build_payload(flag: int, aid: str, timestamp: str) -> str:
 
 
 def _generate_png(flag: int, aid: str, timestamp: str) -> bytes:
+    import qrcode
+
     qr = qrcode.QRCode(
         error_correction=qrcode.constants.ERROR_CORRECT_L,
         box_size=4,
@@ -85,6 +84,14 @@ def generate_qrcode(flag: int, aid: int | str) -> str:
     aid_text = _normalize_aid(aid)
     timestamp = datetime.now(_TIMEZONE).strftime("%Y%m%d%H%M%S")
     return base64.b64encode(_generate_png(flag, aid_text, timestamp)).decode("ascii")
+
+
+def generate_url(flag: int, aid: int | str) -> str:
+    """Return the URL encoded in an activity QR code for the current UTC+8 time."""
+    _validate_flag(flag)
+    aid_text = _normalize_aid(aid)
+    timestamp = datetime.now(_TIMEZONE).strftime("%Y%m%d%H%M%S")
+    return _build_payload(flag, aid_text, timestamp)
 
 
 def main() -> None:
