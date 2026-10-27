@@ -91,8 +91,8 @@ class ActivityManager:
 
     def _get_detail(self, activity):
         result = {**activity, **dict.fromkeys(self.DETAIL_FIELDS)}
-        detail_url = urljoin(self.BASE_URL, activity["url"])
         try:
+            detail_url = urljoin(self.BASE_URL, activity["url"])
             html, _ = self._get_html(detail_url)
             lists = html.xpath(
                 '//ul[contains(concat(" ", normalize-space(@class), " "), " am-list ") '
@@ -147,7 +147,7 @@ class ActivityManager:
             )
             if content:
                 result["content"] = " ".join("".join(content[0].itertext()).split()) or None
-        except (requests.RequestException, ValueError) as exc:
+        except Exception as exc:
             result["detail_error"] = str(exc)
         return result
 
@@ -161,7 +161,15 @@ class ActivityManager:
                 for index, activity in enumerate(activities)
             }
             for future in as_completed(futures):
-                detailed[futures[future]] = future.result()
+                index = futures[future]
+                try:
+                    detailed[index] = future.result()
+                except Exception as exc:
+                    detailed[index] = {
+                        **activities[index],
+                        **dict.fromkeys(self.DETAIL_FIELDS),
+                        "detail_error": str(exc),
+                    }
         return detailed
 
     def get_personal_activity_list(self, max_page=None, deep=False, max_workers=8):
